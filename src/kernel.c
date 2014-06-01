@@ -883,6 +883,9 @@ mt_main(void)
 	mt_setup_timer(MSPERTICK);
 	mt_set_int_handler(CLOCKIRQ, clockint);
 	mt_enable_irq(CLOCKIRQ);
+	
+	// Inicializar mouse
+	mt_mouse_init();
 
 	// Inicializar el sistema de manejo del coprocesador aritmético
 	mt_setup_math();

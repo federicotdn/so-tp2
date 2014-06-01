@@ -40,6 +40,10 @@ extern unsigned long long volatile mt_ticks;
 void mt_main(void);
 bool mt_select_task(void);
 
+/* mouse.c */
+
+void mt_mouse_init(void);
+
 /* irq.c */
 
 // Registros empujados al stack por una interrupción o excepción.

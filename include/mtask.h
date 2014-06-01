@@ -47,7 +47,7 @@ TaskQueue_t;
 struct Task_t
 {
 	char *			name;
-	TaskState_t		state;
+	TaskState_t	state;
 	unsigned		priority;
 	unsigned		atomic_level;
 	unsigned		disint_level;

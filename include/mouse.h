@@ -6,9 +6,9 @@
 extern MsgQueue_t *mouse_event_mq;
 
 typedef struct {
-	char btn1;
-	char btn2;
-	char btn3;
+	char btn_left;
+	char btn_right;
+	char btn_middle;
 	int x_movement;
 	int y_movement;
 } mouse_event_t;

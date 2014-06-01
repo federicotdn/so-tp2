@@ -119,9 +119,34 @@ mouse_task(void *arg)
 	while ( true )
 	{
 		unsigned char c;
+		mouse_event_t event;
+		int x_sgn = 1;
+		int y_sgn = 1;
+		
 		if ( !GetMsgQueue(mouse_mq, &c) )
 			continue;
-		//printk("mouse_task 0x%02.2x\n", c);
+		
+		if (BIT(c, 4))
+			x_sgn = -1;
+		
+		if (BIT(c, 5))
+			y_sgn = -1;
+			
+		event.btn_left = BIT(c, 0);
+		event.btn_right = BIT(c, 1);
+		event.btn_middle = BIT(c, 2);
+		
+		if ( !GetMsgQueue(mouse_mq, &c) )
+			continue;
+			
+		event.x_movement = c * x_sgn;
+		
+		if ( !GetMsgQueue(mouse_mq, &c) )
+			continue;
+			
+		event.y_movement = c * y_sgn;
+		
+		printk("mouse_task hola2\n");
 	}
 }
 

@@ -29,7 +29,7 @@
 #define MOUSE_PRIO			10000		// Alta prioridad, para que funcione como "bottom half" de la interrupción
 #define MOUSE_BUFSIZE		32
 
-#define BIT(val, pos) ((val) & (1 << (pos))) 
+#define BIT(val, pos) ((val) & (1 << (pos)))
 
 static MsgQueue_t *mouse_mq;
 MsgQueue_t *mouse_event_mq;
@@ -120,17 +120,23 @@ mouse_task(void *arg)
 	{
 		unsigned char c;
 		mouse_event_t event;
-		int x_sgn = 1;
-		int y_sgn = 1;
+		bool x_neg = false, y_neg = false;
+		bool x_over, y_over;
 		
 		if ( !GetMsgQueue(mouse_mq, &c) )
 			continue;
 		
+		if (!BIT(c, 3)) /* Bit 3 siempre es 1 */
+			continue;
+		
 		if (BIT(c, 4))
-			x_sgn = -1;
+			x_neg = true;
 		
 		if (BIT(c, 5))
-			y_sgn = -1;
+			y_neg = true;
+			
+		x_over = BIT(c, 6);
+		y_over = BIT(c, 7);
 			
 		event.btn_left = BIT(c, 0);
 		event.btn_right = BIT(c, 1);
@@ -139,14 +145,18 @@ mouse_task(void *arg)
 		if ( !GetMsgQueue(mouse_mq, &c) )
 			continue;
 			
-		event.x_movement = c * x_sgn;
+		event.x_movement = c + (x_neg ? -256 : 0);
 		
 		if ( !GetMsgQueue(mouse_mq, &c) )
 			continue;
 			
-		event.y_movement = c * y_sgn;
+		event.y_movement = c + (y_neg ? -256 : 0);
 		
-		printk("mouse_task hola2\n");
+		if (!x_over && !y_over)
+		{
+			//printk("mov x: %d, mov y: %d\n", event.x_movement, event.y_movement);
+			PutMsgQueueCond(mouse_event_mq, &event);
+		}
 	}
 }
 

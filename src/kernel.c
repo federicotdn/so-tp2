@@ -886,6 +886,9 @@ mt_main(void)
 
 	// Inicializar el sistema de manejo del coprocesador aritmético
 	mt_setup_math();
+	
+	// Inicializar RTC
+	mt_rtc_init();
 
 	// Inicializar tarea principal
 	main_task.name = "Main Task";

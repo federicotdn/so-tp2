@@ -3,8 +3,13 @@
 #include <z.h>
 
 #define Z_POINTER 'o'
+#define Z_XDAMPING 10
+#define Z_YDAMPING 15
 #define Z_MOUSE_XINIT 10
 #define Z_MOUSE_YINIT 10
+
+#define SGN(x) ((x) < 0 ? -1 : ((x) > 0 ? 1 : 0))
+#define ABS(x) ((x) * SGN(x))
 
 static void mouse_listener(void *arg)
 {
@@ -13,6 +18,7 @@ static void mouse_listener(void *arg)
 	int x = Z_MOUSE_XINIT, y = Z_MOUSE_YINIT;
 	int width = mt_cons_nrows();
 	int height = mt_cons_ncols();
+	int dx = 0, dy = 0;
 	
 	while ( GetMsgQueueCond(mouse_event_mq, &event) )
 		; /* ignorar eventos viejos */
@@ -27,8 +33,20 @@ static void mouse_listener(void *arg)
 			mt_cons_gotoxy(x_old, y_old);
 			mt_cons_putc(' ');
 			
-			x += event.x_movement;
-			y += -event.y_movement;
+			dx += SGN(event.x_movement);
+			dy += -SGN(event.y_movement);
+			
+			if (ABS(dx) > Z_XDAMPING)
+			{
+				x += SGN(dx);
+				dx = 0;
+			}
+				
+			if (ABS(dy) > Z_YDAMPING)
+			{
+				y += SGN(dy);
+				dy = 0;
+			}
 			
 			if (x < 0)
 				x = 0;

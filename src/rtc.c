@@ -155,7 +155,12 @@ Funciones API publica
 --------------------------------------------------------------------------------
 */
 
-/* Ejecuta una funcion luego de un tiempo en segundos especificado */
+/* 
+ * Ejecuta una funcion luego de un tiempo en segundos especificado.
+ * En el caso promedio, la diferencia entre el tiempo especificado y el tiempo
+ * en la que se ejecuta la funcion sera alrededor de un milisegundo (aprox. un ciclo de 
+ * interrupcion).
+ */
 int RtcTimedFunction(RtcFunc_t fn, void *arg, unsigned int seconds)
 {
 	struct rtc_fn *new_fn;

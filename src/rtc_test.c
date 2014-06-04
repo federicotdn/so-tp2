@@ -3,12 +3,14 @@
 
 void rtc_test(void *arg)
 {
-	printk("\nFuncion completada.\n-> ");
+	int *num = (int*)arg; 
+	printk("\nFuncion completada. arg: %d\n-> ", *num);
 }
 
 int rtctest_main(int argc, char *argv[])
 {
 	char buf[10];
+	int test_arg = 42;
 		
 	printk("RTC Test\n");
 	printk("Ingresar un tiempo para crear una tarea con ese tiempo de demora.\n");
@@ -18,8 +20,11 @@ int rtctest_main(int argc, char *argv[])
 	while (mt_getline(buf, 10) > 1)
 	{
 		int sec = atoi(buf);
-		RtcTimedFunction(rtc_test, NULL, sec);
-		printk("Tarea creada con tiempo: %d segundos.\n", sec);
+		
+		if (RtcTimedFunction(rtc_test, &test_arg, sec) == 0)
+			printk("Tarea creada con tiempo: %d segundos.\n", sec);
+		else
+			printk("Error al agregar tarea.\n");
 		
 		printk("-> ");
 	}

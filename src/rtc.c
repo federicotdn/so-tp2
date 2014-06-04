@@ -11,8 +11,10 @@
 #define CMOS_REG_C 0x0C
 
 #define RTC_PRIO 10000
-#define RTC_TIME_MAX 1000 /* cambiar */
 #define RTC_QUEUE_SIZE 30
+#define RTC_INTS_SEC 1024
+#define RTC_MAX_TICKS -1U
+#define RTC_MAX_SECS (RTC_MAX_TICKS / (unsigned int)RTC_INTS_SEC)
 
 #define BIT(val, pos) ((val) & (1 << (pos)))
 
@@ -21,7 +23,7 @@ enum RTC_ERRORS { RTC_ERR_ADD = 1, RTC_ERR_MEM };
 struct rtc_fn {
 	RtcFunc_t fn;
 	void *arg;
-	rtc_secs_t time_left;
+	unsigned int ticks_left;
 	struct rtc_fn *next;
 };
 
@@ -83,15 +85,15 @@ static void rtc_int(unsigned irq)
 	reg_c = read_cmos(CMOS_REG_C);
 	
 	/* Asegurarse de ser Update-Ended Interrupt. */
-	if (!BIT(reg_c, 4))
+	if (!BIT(reg_c, 6))
 		Panic("RTC: Tipo de interrupcion incompatible.");
 			
-	/* Se le resta 1 segundo a cada funcion que esta esperando. */
+	/* Se le resta un tick a cada funcion que esta esperando. */
 	aux = rtc_fn_head;
 	while (aux != NULL)
 	{
-		if (aux->time_left)
-			aux->time_left -= 1;
+		if (aux->ticks_left)
+			aux->ticks_left -= 1;
 		aux = aux->next;
 	}
 	
@@ -115,7 +117,7 @@ static void rtc_int(unsigned irq)
 	while (aux != NULL && aux->next != NULL)
 	{
 		struct rtc_fn *next = aux->next;
-		if (next->time_left == 0)
+		if (next->ticks_left == 0)
 		{
 			aux->next = next->next;
 			next->next = NULL;
@@ -125,7 +127,7 @@ static void rtc_int(unsigned irq)
 	}
 	
 	aux = rtc_fn_head;
-	if (aux->time_left == 0)	
+	if (aux->ticks_left == 0)	
 	{
 		rtc_fn_head = aux->next;
 		aux->next = NULL;
@@ -154,9 +156,10 @@ Funciones API publica
 */
 
 /* Ejecuta una funcion luego de un tiempo en segundos especificado */
-int RtcTimedFunction(RtcFunc_t fn, void *arg, rtc_secs_t seconds)
+int RtcTimedFunction(RtcFunc_t fn, void *arg, unsigned int seconds)
 {
 	struct rtc_fn *new_fn;
+	unsigned int ticks = 0;
 	
 	if (seconds == 0)
 	{
@@ -164,8 +167,11 @@ int RtcTimedFunction(RtcFunc_t fn, void *arg, rtc_secs_t seconds)
 		return 0;
 	}
 	
-	if (seconds > RTC_TIME_MAX)
+	if (seconds > RTC_MAX_SECS)
 		return RTC_ERR_ADD;
+	
+	/* ticks = segundos * interrupciones/segundo */
+	ticks = seconds * RTC_INTS_SEC;
 	
 	new_fn = Malloc(sizeof(struct rtc_fn));
 	if (new_fn == NULL)
@@ -173,7 +179,7 @@ int RtcTimedFunction(RtcFunc_t fn, void *arg, rtc_secs_t seconds)
 	
 	new_fn->fn = fn;
 	new_fn->arg = arg;
-	new_fn->time_left = seconds;
+	new_fn->ticks_left = ticks;
 	new_fn->next = NULL;
 	
 	/* Agregar la funcion a la cola de funciones nuevas */
@@ -191,7 +197,7 @@ int RtcTimedFunction(RtcFunc_t fn, void *arg, rtc_secs_t seconds)
 /* Inicializar las utilidades RTC */
 void mt_rtc_init(void)
 {
-	unsigned reg_b = 0;
+	unsigned reg_a = 0, reg_b = 0;
 	Task_t *rtc_task;
 	rtc_fn_head = NULL;
 	
@@ -204,11 +210,14 @@ void mt_rtc_init(void)
 	rtc_task = CreateTask(rtc_task_fn, 0, NULL, "RTC Task", RTC_PRIO);
 	Ready(rtc_task);
 	
-	/* 
-	 * Habilitar Update-Ended Interrupt (interrupcion cada 1 segundo),
-	 * para lograr esto se habilita el bit 4 del registro C del CMOS. 
-	 */
+	/* Configurar registro A para recibir 1024 interrupciones por segundo. */
+	reg_a = read_cmos(CMOS_REG_A);
+	reg_a &= 0xF0;
+	reg_a |= 0x06;
+	write_cmos(CMOS_REG_A, reg_a);
+	
+	/* Habilitar Periodic interrupt, para lograr esto se habilita el bit 6 del registro B del CMOS. */
 	reg_b = read_cmos(CMOS_REG_B);
-	reg_b |= (0x01 << 4);
+	reg_b |= (0x01 << 6);
 	write_cmos(CMOS_REG_B, reg_b);
 }

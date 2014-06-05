@@ -20,15 +20,26 @@
 #define RTC_MAX_TICKS -1U
 #define RTC_MAX_SECS (RTC_MAX_TICKS / (unsigned int)RTC_INTS_SEC)
 
+/* Codigos para tipos de funciones a programar con el RTC */
+#define RTC_ONCE 1
+#define RTC_REPEAT 2
+#define RTC_ALARM 3
+#define RTC_DISABLED 4
+
 #define BIT(val, pos) ((val) & (1 << (pos)))
 #define BCD_TO_BIN(t) ((t & 0x0F) + ((t >> 4) * 10))
 
-enum RTC_ERRORS { RTC_ERR_ADD = 1, RTC_ERR_MEM };
+enum RTC_ERRORS { RTC_ERR_ADD = 1, RTC_ERR_MEM, RTC_ERR_FMT };
 
 struct rtc_fn {
 	RtcFunc_t fn;
 	void *arg;
+	
+	char mode;
 	unsigned int ticks_left;
+	unsigned int ticks_init;
+	struct RtcTime_t exec_time;
+	
 	struct rtc_fn *next;
 };
 
@@ -37,8 +48,10 @@ struct rtc_fn {
  * cierto tiempo.  Esta lista solo es manipulada por la rutina de interrupcion RTC.
  * La rutina no utiliza funciones bloqueantes, y nunca reserva o libera memoria 
  * del heap.
+ * 
+ * rtc_fn_head es un nodo sentinela para facilitar el codigo de eliminado de funciones.
  */
-static struct rtc_fn *rtc_fn_head;
+static struct rtc_fn rtc_fn_head;
 
 /* 
  * Cola de funciones nuevas a ser agregadas a la lista de la rutina de
@@ -53,6 +66,12 @@ static MsgQueue_t *new_rtc_fns;
  * esta cola inmediatamente.
  */
 static MsgQueue_t *ready_rtc_fns;
+
+/*
+ * Cola de funciones a remover del sistema.  Se utiliza para cancelar funciones que
+ * fueron programadas previamente.
+ */
+static MsgQueue_t *remove_rtc_fns;
 
 /*
  * Funciones para leer/escribir registros del CMOS mediante inb/outb
@@ -77,7 +96,7 @@ static unsigned read_cmos(unsigned char reg)
 	return d;
 }
 
-int rtc_update_in_progress()
+int rtc_update_in_progress(void)
 {
 	int reg_a = read_cmos(CMOS_REG_A);
 	return BIT(reg_a, 7);
@@ -86,6 +105,8 @@ int rtc_update_in_progress()
 /* Maneja la interrupcion generada por el RTC (IRQ 8) */
 static void rtc_int(unsigned irq)
 {
+	static unsigned alarm_count = 0;
+	struct RtcTime_t curr_time;
 	unsigned reg_c;
 	struct rtc_fn *new_fn, *aux;
 	
@@ -95,15 +116,18 @@ static void rtc_int(unsigned irq)
 	 */
 	reg_c = read_cmos(CMOS_REG_C);
 	
-	/* Asegurarse de ser Update-Ended Interrupt. */
+	/* Asegurarse de ser Periodic Interrupt. */
 	if (!BIT(reg_c, 6))
 		Panic("RTC: Tipo de interrupcion incompatible.");
 			
-	/* Se le resta un tick a cada funcion que esta esperando. */
-	aux = rtc_fn_head;
+	/* 
+	 * Se le resta un tick a cada funcion que esta esperando,
+	 * pero solo si no es de tipo RTC_ALARM. 
+	 */
+	aux = rtc_fn_head.next;
 	while (aux != NULL)
 	{
-		if (aux->ticks_left)
+		if (aux->ticks_left && aux->mode != RTC_ALARM)
 			aux->ticks_left -= 1;
 		aux = aux->next;
 	}
@@ -111,42 +135,76 @@ static void rtc_int(unsigned irq)
 	/* Fijarse si hay funciones nuevas para agregar. */
 	while( GetMsgQueueCond(new_rtc_fns, &new_fn) )
 	{
-		new_fn->next = rtc_fn_head;
-		rtc_fn_head = new_fn;
+		new_fn->next = rtc_fn_head.next;
+		rtc_fn_head.next = new_fn;
+		
+		if (new_fn->mode == RTC_ALARM)
+			alarm_count++;
 	}
 	
-	if (rtc_fn_head == NULL)
+	
+	/* Dos optimizaciones */
+	if (rtc_fn_head.next == NULL)
 		return;
 	
+	if (alarm_count > 0)
+		RtcGetTime(&curr_time);
+
 	/*
 	 * Se recorre la lista (linked list) de funciones, buscando una con
 	 * tiempo agotado.  Si se encuentra, se la remueve de la lista y se 
 	 * la agrega a un MessageQueue de funciones listas a ser ejecutadas
-	 * por el 'bottom half' (rtc_task_fn).
+	 * por el 'bottom half' (rtc_task_fn).  En el caso de las funciones
+	 * a repetir, no el proceso es el mismo pero no se la quita de la 
+	 * lista.  
+	 * 
+	 * Para las funciones de tipo alarma, el proceso es similar
+	 * pero se compara el valor de tiempo de la alarma con la hora actual,
+	 * en vez de fijarse si tiene tiempo agotado.
 	 */
-	aux = rtc_fn_head;
+	aux = &rtc_fn_head;
 	while (aux != NULL && aux->next != NULL)
 	{
 		struct rtc_fn *next = aux->next;
-		if (next->ticks_left == 0)
+		
+		if (next->mode != RTC_ALARM && next->ticks_left == 0)
 		{
-			aux->next = next->next;
-			next->next = NULL;
+			if (next->mode == RTC_ONCE)
+			{
+				aux->next = next->next;
+				next->next = NULL;
+			}
+			else
+			{
+				next->ticks_left = next->ticks_init;
+			}
+			
 			PutMsgQueueCond(ready_rtc_fns, &next);
 		}
+		else if (next->mode == RTC_ALARM)
+		{
+			struct RtcTime_t *exec_time = &next->exec_time;
+			
+			if (curr_time.seconds == exec_time->seconds &&
+				curr_time.minutes == exec_time->minutes &&
+				curr_time.hours   == exec_time->hours )
+			{
+				aux->next = next->next;
+				next->next = NULL;
+				alarm_count--;
+				PutMsgQueueCond(ready_rtc_fns, &next);
+			}
+		}
+
 		aux = aux->next;
-	}
-	
-	aux = rtc_fn_head;
-	if (aux->ticks_left == 0)	
-	{
-		rtc_fn_head = aux->next;
-		aux->next = NULL;
-		PutMsgQueueCond(ready_rtc_fns, &aux);
 	}
 }
 
-/* Comprueba si hay funciones a ser ejecutadas (listas) y las ejecuta */
+/* 
+ * Comprueba si hay funciones a ser ejecutadas (listas) y las ejecuta.
+ * Tambien, libera la memoria de las funciones que no seran ejecutadas
+ * nuevamente.
+ */
 static void rtc_task_fn(void *arg)
 {
 	while (1)
@@ -155,35 +213,26 @@ static void rtc_task_fn(void *arg)
 		if ( !GetMsgQueue(ready_rtc_fns, &rdy_fn) )
 			continue;
 		
-		rdy_fn->fn(rdy_fn->arg);
-		Free(rdy_fn);
+		if (rdy_fn->mode != RTC_DISABLED)
+			rdy_fn->fn(rdy_fn->arg);
+		
+		if (rdy_fn->mode != RTC_REPEAT)
+			Free(rdy_fn);
 	}
 }
 
-/*
---------------------------------------------------------------------------------
-Funciones API publica
---------------------------------------------------------------------------------
-*/
+static int rtc_is_valid_time(struct RtcTime_t *t)
+{
+	return (t->hours < 24 && t->minutes < 60 && t->seconds < 60);
+}
 
-/* 
- * Ejecuta una funcion luego de un tiempo en segundos especificado.
- * En el caso promedio, la diferencia entre el tiempo especificado y el tiempo
- * en la que se ejecuta la funcion sera alrededor de un milisegundo (aprox. un ciclo de 
- * interrupcion).
- * 
- * Devuelve 0 si la funcion fue agregada correctamente, y en caso contrario, un codigo de error.
- */
-int RtcTimedFunction(RtcFunc_t fn, void *arg, unsigned int seconds)
+static int rtc_add_function(RtcFunc_t fn, void *arg, unsigned int seconds, char mode)
 {
 	struct rtc_fn *new_fn;
 	unsigned int ticks = 0;
 	
 	if (seconds == 0)
-	{
-		fn(arg);
-		return 0;
-	}
+		return RTC_ERR_FMT;
 	
 	if (seconds > RTC_MAX_SECS)
 		return RTC_ERR_ADD;
@@ -198,6 +247,8 @@ int RtcTimedFunction(RtcFunc_t fn, void *arg, unsigned int seconds)
 	new_fn->fn = fn;
 	new_fn->arg = arg;
 	new_fn->ticks_left = ticks;
+	new_fn->ticks_init = ticks;
+	new_fn->mode = mode;
 	new_fn->next = NULL;
 	
 	/* Agregar la funcion a la cola de funciones nuevas */
@@ -210,6 +261,65 @@ int RtcTimedFunction(RtcFunc_t fn, void *arg, unsigned int seconds)
 		Free(new_fn);
 		return RTC_ERR_ADD;
 	}
+}
+
+static int rtc_add_function_alarm(RtcFunc_t fn, void *arg, struct RtcTime_t *t)
+{
+	struct rtc_fn *new_fn;
+	
+	new_fn = Malloc(sizeof(struct rtc_fn));
+	if (new_fn == NULL)
+		return RTC_ERR_MEM;
+		
+	new_fn->fn = fn;
+	new_fn->arg = arg;
+	new_fn->ticks_init = new_fn->ticks_left = 0;
+	new_fn->mode = RTC_ALARM;
+	new_fn->next = NULL;
+	
+	new_fn->exec_time.hours = t->hours;
+	new_fn->exec_time.minutes = t->minutes;
+	new_fn->exec_time.seconds = t->seconds;
+	
+	if (PutMsgQueue(new_rtc_fns, &new_fn))
+	{
+		return 0;
+	}
+	else
+	{
+		Free(new_fn);
+		return RTC_ERR_ADD;
+	}
+}
+
+/*
+--------------------------------------------------------------------------------
+Funciones API publica
+--------------------------------------------------------------------------------
+*/
+
+/* 
+ * Ejecuta una funcion luego de un tiempo en segundos especificado.
+ * En el caso promedio, la diferencia entre el tiempo especificado y el tiempo
+ * en la que se ejecuta la funcion sera alrededor de un milisegundo (aprox. un ciclo de 
+ * interrupcion).
+ */
+int RtcTimedFunction(RtcFunc_t fn, void *arg, unsigned int seconds)
+{
+	return rtc_add_function(fn, arg, seconds, RTC_ONCE);
+}
+
+int RtcRepeatFunction(RtcFunc_t fn, void *arg, unsigned int seconds)
+{
+	return rtc_add_function(fn, arg, seconds, RTC_REPEAT);
+}
+
+int RtcAlarmFunction(RtcFunc_t fn, void *arg, struct RtcTime_t *t)
+{
+	if (rtc_is_valid_time(t))
+		return rtc_add_function_alarm(fn, arg, t);
+	else
+		return RTC_ERR_FMT;
 }
 
 void RtcGetTime(struct RtcTime_t *t)
@@ -288,10 +398,12 @@ void mt_rtc_init(void)
 {
 	unsigned reg_a = 0, reg_b = 0;
 	Task_t *rtc_task;
-	rtc_fn_head = NULL;
+	
+	rtc_fn_head.next = NULL;
 	
 	new_rtc_fns = CreateMsgQueue("rtc_new_fns", RTC_QUEUE_SIZE, sizeof(struct rtc_fn*), false, true);
 	ready_rtc_fns = CreateMsgQueue("rtc_rdy_fns", RTC_QUEUE_SIZE, sizeof(struct rtc_fn*), false, false);
+	remove_rtc_fns = CreateMsgQueue("rtc_remove_fns", RTC_QUEUE_SIZE, sizeof(struct rtc_fn*), false, true);
 	
 	mt_set_int_handler(RTC_INT, rtc_int);
 	mt_enable_irq(RTC_INT);

@@ -7,7 +7,44 @@ void rtc_test(void *arg)
 	printk("\nFuncion completada. arg: %d\n-> ", *num);
 }
 
-int rtctime_main(int argc, char *arg[])
+void rtc_test2(void *arg)
+{
+	int *num = (int*)arg; 
+	struct RtcTime_t t;
+	
+	printk("\nFuncion completada. arg: %d\n-> ", *num);
+	RtcGetTime(&t);
+	printk("Hora: %u:%u:%u\n", t.hours, t.minutes, t.seconds);
+}
+
+int rtcalarm_main(int argc, char *argv[])
+{
+	struct RtcTime_t time;
+	char buf[30];
+	int arg = 1337;
+	
+	printk("RTC Alarm Test\n");
+	printk("Ingresar hora:\n");
+	mt_getline(buf, 10);
+	time.hours = atoi(buf);
+	
+	printk("Ingresar minutos:\n");
+	mt_getline(buf, 10);
+	time.minutes = atoi(buf);
+	
+	printk("Ingresar segundos:\n");
+	mt_getline(buf, 10);
+	time.seconds = atoi(buf);
+	
+	RtcAlarmFunction(rtc_test2, &arg, &time);
+	
+	printk("Esperando...\n");
+	
+	mt_getline(buf, 10);
+	return 0;
+}
+
+int rtctime_main(int argc, char *argv[])
 {
 	struct RtcTime_t t;
 	RtcGetTime(&t);

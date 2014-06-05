@@ -24,6 +24,7 @@ cmdtab[] =
 	{	"divz",			divz_main },
 	{ 	"r",		rtctest_main },
 	{ 	"t",		rtctime_main },
+	{ 	"a",		rtcalarm_main },
 	{ }
 };
 

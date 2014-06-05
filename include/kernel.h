@@ -4,6 +4,10 @@
 #include "mtask.h"
 #include "segments.h"
 
+/* rtc.c */
+
+void mt_rtc_init(void);
+
 /* gdt_idt.c */
 
 void mt_setup_gdt_idt(void);

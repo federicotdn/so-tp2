@@ -20,5 +20,7 @@ void RtcGetDate(struct RtcDate_t *d);
 int RtcSetTime(struct RtcTime_t *t);
 int RtcSetDate(struct RtcDate_t *d);
 int RtcTimedFunction(RtcFunc_t fn, void *arg, unsigned int seconds);
+int RtcRepeatFunction(RtcFunc_t fn, void *arg, unsigned int seconds);
+int RtcAlarmFunction(RtcFunc_t fn, void *arg, struct RtcTime_t *t);
 
 #endif

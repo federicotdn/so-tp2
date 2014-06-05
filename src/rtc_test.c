@@ -7,6 +7,14 @@ void rtc_test(void *arg)
 	printk("\nFuncion completada. arg: %d\n-> ", *num);
 }
 
+int rtctime_main(int argc, char *arg[])
+{
+	struct RtcTime_t t;
+	RtcGetTime(&t);
+	printk("sec: %u, min: %u, hour: %d\n", t.seconds, t.minutes, t.hours);
+	return 0;
+}
+
 int rtctest_main(int argc, char *argv[])
 {
 	char buf[10];
@@ -29,6 +37,5 @@ int rtctest_main(int argc, char *argv[])
 		printk("-> ");
 	}
 	
-	RtcTimedFunction(rtc_test, NULL, atoi(argv[1]));
 	return 0;
 }

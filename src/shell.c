@@ -23,6 +23,7 @@ cmdtab[] =
 	{	"prodcons",		prodcons_main },
 	{	"divz",			divz_main },
 	{ 	"r",		rtctest_main },
+	{ 	"t",		rtctime_main },
 	{ }
 };
 

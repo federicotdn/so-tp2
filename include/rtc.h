@@ -3,12 +3,22 @@
 
 typedef void (*RtcFunc_t)(void *arg);
 
-struct time;
-struct date;
+struct RtcTime_t {
+	unsigned hours;
+	unsigned minutes;
+	unsigned seconds;
+};
 
-int RtcGetTime(struct time *t);
-int RtcGetDate(struct date *d);
+struct RtcDate_t {
+	unsigned day;
+	unsigned month;
+	unsigned year;
+};
 
+void RtcGetTime(struct RtcTime_t *t);
+void RtcGetDate(struct RtcDate_t *d);
+int RtcSetTime(struct RtcTime_t *t);
+int RtcSetDate(struct RtcDate_t *d);
 int RtcTimedFunction(RtcFunc_t fn, void *arg, unsigned int seconds);
 
 #endif

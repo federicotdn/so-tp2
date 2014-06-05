@@ -10,6 +10,10 @@
 #define CMOS_REG_B 0x0B
 #define CMOS_REG_C 0x0C
 
+#define RTC_REG_SEC 0x00
+#define RTC_REG_MIN 0x02
+#define RTC_REG_HOUR 0x04
+
 #define RTC_PRIO 10000
 #define RTC_QUEUE_SIZE 30
 #define RTC_INTS_SEC 1024
@@ -17,6 +21,7 @@
 #define RTC_MAX_SECS (RTC_MAX_TICKS / (unsigned int)RTC_INTS_SEC)
 
 #define BIT(val, pos) ((val) & (1 << (pos)))
+#define BCD_TO_BIN(t) ((t & 0x0F) + ((t >> 4) * 10))
 
 enum RTC_ERRORS { RTC_ERR_ADD = 1, RTC_ERR_MEM };
 
@@ -70,6 +75,12 @@ static unsigned read_cmos(unsigned char reg)
 	RestoreInts();
 	
 	return d;
+}
+
+int rtc_update_in_progress()
+{
+	int reg_a = read_cmos(CMOS_REG_A);
+	return BIT(reg_a, 7);
 }
 
 /* Maneja la interrupcion generada por el RTC (IRQ 8) */
@@ -160,6 +171,8 @@ Funciones API publica
  * En el caso promedio, la diferencia entre el tiempo especificado y el tiempo
  * en la que se ejecuta la funcion sera alrededor de un milisegundo (aprox. un ciclo de 
  * interrupcion).
+ * 
+ * Devuelve 0 si la funcion fue agregada correctamente, y en caso contrario, un codigo de error.
  */
 int RtcTimedFunction(RtcFunc_t fn, void *arg, unsigned int seconds)
 {
@@ -197,6 +210,77 @@ int RtcTimedFunction(RtcFunc_t fn, void *arg, unsigned int seconds)
 		Free(new_fn);
 		return RTC_ERR_ADD;
 	}
+}
+
+void RtcGetTime(struct RtcTime_t *t)
+{
+	unsigned seconds, last_seconds;
+	unsigned minutes, last_minutes;
+	unsigned hours, last_hours;
+	unsigned reg_b;
+	bool valid = false, hour_pm = false;
+	
+	while (!valid)
+	{
+		while (rtc_update_in_progress())
+			;
+		last_seconds = read_cmos(RTC_REG_SEC);
+		last_minutes = read_cmos(RTC_REG_MIN);
+		last_hours = read_cmos(RTC_REG_HOUR);
+		
+		while (rtc_update_in_progress())
+			;
+		seconds = read_cmos(RTC_REG_SEC);
+		minutes = read_cmos(RTC_REG_MIN);
+		hours = read_cmos(RTC_REG_HOUR);		
+		
+		if (seconds == last_seconds && 
+			minutes == last_minutes && 
+			hours == last_hours)
+		{
+			valid = true;
+		}
+	}
+	
+	reg_b = read_cmos(CMOS_REG_B);
+	if (BIT(hours, 7))
+	{
+		hour_pm = true;
+	}
+	hours &= 0x7F;
+	
+	/* Convertir BCD -> binario */
+	if (!BIT(reg_b, 2))
+	{
+		seconds = BCD_TO_BIN(seconds);
+		minutes = BCD_TO_BIN(minutes);
+		hours = BCD_TO_BIN(hours);
+	}
+	
+	/* Convertir am/pm -> 24hs */
+	if (!BIT(reg_b, 1) && hour_pm)
+	{
+		hours = (hours + 12) & 24;
+	}
+	
+	t->seconds = seconds;
+	t->minutes = minutes;
+	t->hours = hours;
+}
+
+void RtcGetDate(struct RtcDate_t *d)
+{
+	
+}
+
+int RtcSetTime(struct RtcTime_t *t)
+{
+	
+}
+
+int RtcSetDate(struct RtcDate_t *d)
+{
+	
 }
 
 /* Inicializar las utilidades RTC */

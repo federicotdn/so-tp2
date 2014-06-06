@@ -29,7 +29,10 @@
 #define BIT(val, pos) ((val) & (1 << (pos)))
 #define BCD_TO_BIN(t) ((t & 0x0F) + ((t >> 4) * 10))
 
-enum RTC_ERRORS { RTC_ERR_ADD = 1, RTC_ERR_MEM, RTC_ERR_FMT };
+/* Errores */
+#define RTC_ERR_ADD -1
+#define RTC_ERR_MEM -2
+#define RTC_ERR_FMT -3
 
 struct rtc_fn {
 	RtcFunc_t fn;
@@ -40,8 +43,27 @@ struct rtc_fn {
 	unsigned int ticks_init;
 	struct RtcTime_t exec_time;
 	
+	RtcId_t id;
 	struct rtc_fn *next;
 };
+
+struct rtc_id {
+	RtcId_t id;
+	struct rtc_id *next;
+};
+
+/*
+ * Lista de IDs disponibles para ser usados nuevamente, y contador para generar
+ * IDs nuevos.  Los IDs son utilizados para identificar funciones agregadas al 
+ * sistema RTC.
+ */
+static struct rtc_id *rtc_id_head;
+static RtcId_t rtc_id_counter;
+
+/*
+ * Mutex para sincronizar el acceso a rtc_id_head y rtc_id_counter.
+ */
+static Mutex_t *rtc_mutex;
 
 /*
  * Lista (linked list) de funciones esperando a ser ejecutadas luego de
@@ -68,10 +90,16 @@ static MsgQueue_t *new_rtc_fns;
 static MsgQueue_t *ready_rtc_fns;
 
 /*
- * Cola de funciones a remover del sistema.  Se utiliza para cancelar funciones que
+ * Cola de IDs de funciones a remover del sistema.  Se utiliza para cancelar funciones que
  * fueron programadas previamente.
  */
 static MsgQueue_t *remove_rtc_fns;
+
+/*
+--------------------------------------------------------------------------------
+Funciones internas
+--------------------------------------------------------------------------------
+*/
 
 /*
  * Funciones para leer/escribir registros del CMOS mediante inb/outb
@@ -200,6 +228,48 @@ static void rtc_int(unsigned irq)
 	}
 }
 
+static RtcId_t rtc_gen_id()
+{
+	RtcId_t id;
+	EnterMutex(rtc_mutex);
+	
+	if (rtc_id_head != NULL)
+	{
+		struct rtc_id *aux;
+		id = rtc_id_head->id;
+		aux = rtc_id_head;
+		rtc_id_head = rtc_id_head->next;
+		Free(aux);
+	}
+	else
+	{
+		id = rtc_id_counter++;
+	}
+	
+	LeaveMutex(rtc_mutex);
+	return id;
+}
+
+static void rtc_return_id(RtcId_t id)
+{
+	struct rtc_id *aux;
+	
+	EnterMutex(rtc_mutex);
+	
+	aux = Malloc(sizeof(struct rtc_id));
+	if (aux == NULL)
+	{
+		LeaveMutex(rtc_mutex);
+		return;
+	}
+		
+	aux->id = id;
+	aux->next = rtc_id_head;
+	rtc_id_head = aux;
+	
+	LeaveMutex(rtc_mutex);
+}
+
 /* 
  * Comprueba si hay funciones a ser ejecutadas (listas) y las ejecuta.
  * Tambien, libera la memoria de las funciones que no seran ejecutadas
@@ -217,7 +287,10 @@ static void rtc_task_fn(void *arg)
 			rdy_fn->fn(rdy_fn->arg);
 		
 		if (rdy_fn->mode != RTC_REPEAT)
+		{
+			rtc_return_id(rdy_fn->id);
 			Free(rdy_fn);
+		}
 	}
 }
 
@@ -226,7 +299,7 @@ static int rtc_is_valid_time(struct RtcTime_t *t)
 	return (t->hours < 24 && t->minutes < 60 && t->seconds < 60);
 }
 
-static int rtc_add_function(RtcFunc_t fn, void *arg, unsigned int seconds, char mode)
+static RtcId_t rtc_add_function(RtcFunc_t fn, void *arg, unsigned int seconds, char mode)
 {
 	struct rtc_fn *new_fn;
 	unsigned int ticks = 0;
@@ -250,20 +323,22 @@ static int rtc_add_function(RtcFunc_t fn, void *arg, unsigned int seconds, char 
 	new_fn->ticks_init = ticks;
 	new_fn->mode = mode;
 	new_fn->next = NULL;
+	new_fn->id = rtc_gen_id();
 	
 	/* Agregar la funcion a la cola de funciones nuevas */
 	if (PutMsgQueue(new_rtc_fns, &new_fn))
 	{
-		return 0;
+		return new_fn->id;
 	}
 	else
 	{
+		rtc_return_id(new_fn->id);
 		Free(new_fn);
 		return RTC_ERR_ADD;
 	}
 }
 
-static int rtc_add_function_alarm(RtcFunc_t fn, void *arg, struct RtcTime_t *t)
+static RtcId_t rtc_add_function_alarm(RtcFunc_t fn, void *arg, struct RtcTime_t *t)
 {
 	struct rtc_fn *new_fn;
 	
@@ -276,6 +351,7 @@ static int rtc_add_function_alarm(RtcFunc_t fn, void *arg, struct RtcTime_t *t)
 	new_fn->ticks_init = new_fn->ticks_left = 0;
 	new_fn->mode = RTC_ALARM;
 	new_fn->next = NULL;
+	new_fn->id = rtc_gen_id();
 	
 	new_fn->exec_time.hours = t->hours;
 	new_fn->exec_time.minutes = t->minutes;
@@ -283,10 +359,11 @@ static int rtc_add_function_alarm(RtcFunc_t fn, void *arg, struct RtcTime_t *t)
 	
 	if (PutMsgQueue(new_rtc_fns, &new_fn))
 	{
-		return 0;
+		return new_fn->id;
 	}
 	else
 	{
+		rtc_return_id(new_fn->id);
 		Free(new_fn);
 		return RTC_ERR_ADD;
 	}
@@ -303,23 +380,31 @@ Funciones API publica
  * En el caso promedio, la diferencia entre el tiempo especificado y el tiempo
  * en la que se ejecuta la funcion sera alrededor de un milisegundo (aprox. un ciclo de 
  * interrupcion).
+ * 
+ * Devuelve un ID asociado a la funcion agregada (positivo), o un error (negativo) si 
+ * hubo un error.
  */
-int RtcTimedFunction(RtcFunc_t fn, void *arg, unsigned int seconds)
+RtcId_t RtcTimedFunction(RtcFunc_t fn, void *arg, unsigned int seconds)
 {
 	return rtc_add_function(fn, arg, seconds, RTC_ONCE);
 }
 
-int RtcRepeatFunction(RtcFunc_t fn, void *arg, unsigned int seconds)
+RtcId_t RtcRepeatFunction(RtcFunc_t fn, void *arg, unsigned int seconds)
 {
 	return rtc_add_function(fn, arg, seconds, RTC_REPEAT);
 }
 
-int RtcAlarmFunction(RtcFunc_t fn, void *arg, struct RtcTime_t *t)
+RtcId_t RtcAlarmFunction(RtcFunc_t fn, void *arg, struct RtcTime_t *t)
 {
 	if (rtc_is_valid_time(t))
 		return rtc_add_function_alarm(fn, arg, t);
 	else
 		return RTC_ERR_FMT;
+}
+
+int RtcCancelFunction(RtcId_t id)
+{
+	
 }
 
 void RtcGetTime(struct RtcTime_t *t)
@@ -370,7 +455,7 @@ void RtcGetTime(struct RtcTime_t *t)
 	/* Convertir am/pm -> 24hs */
 	if (!BIT(reg_b, 1) && hour_pm)
 	{
-		hours = (hours + 12) & 24;
+		hours = (hours + 12) % 24;
 	}
 	
 	t->seconds = seconds;
@@ -400,10 +485,14 @@ void mt_rtc_init(void)
 	Task_t *rtc_task;
 	
 	rtc_fn_head.next = NULL;
+	rtc_id_head = NULL;
+	rtc_id_counter = 1;
+	
+	rtc_mutex = CreateMutex("RTCMutex");
 	
 	new_rtc_fns = CreateMsgQueue("rtc_new_fns", RTC_QUEUE_SIZE, sizeof(struct rtc_fn*), false, true);
 	ready_rtc_fns = CreateMsgQueue("rtc_rdy_fns", RTC_QUEUE_SIZE, sizeof(struct rtc_fn*), false, false);
-	remove_rtc_fns = CreateMsgQueue("rtc_remove_fns", RTC_QUEUE_SIZE, sizeof(struct rtc_fn*), false, true);
+	remove_rtc_fns = CreateMsgQueue("rtc_remove_fns", RTC_QUEUE_SIZE, sizeof(RtcId_t), false, true);
 	
 	mt_set_int_handler(RTC_INT, rtc_int);
 	mt_enable_irq(RTC_INT);

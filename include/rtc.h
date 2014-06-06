@@ -2,6 +2,7 @@
 #define RTC_H_INCLUDED
 
 typedef void (*RtcFunc_t)(void *arg);
+typedef long RtcId_t;
 
 struct RtcTime_t {
 	unsigned hours;
@@ -19,8 +20,9 @@ void RtcGetTime(struct RtcTime_t *t);
 void RtcGetDate(struct RtcDate_t *d);
 int RtcSetTime(struct RtcTime_t *t);
 int RtcSetDate(struct RtcDate_t *d);
-int RtcTimedFunction(RtcFunc_t fn, void *arg, unsigned int seconds);
-int RtcRepeatFunction(RtcFunc_t fn, void *arg, unsigned int seconds);
-int RtcAlarmFunction(RtcFunc_t fn, void *arg, struct RtcTime_t *t);
+RtcId_t RtcTimedFunction(RtcFunc_t fn, void *arg, unsigned int seconds);
+RtcId_t RtcRepeatFunction(RtcFunc_t fn, void *arg, unsigned int seconds);
+RtcId_t RtcAlarmFunction(RtcFunc_t fn, void *arg, struct RtcTime_t *t);
+int RtcCancelFunction(RtcId_t id);
 
 #endif

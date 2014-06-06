@@ -65,9 +65,10 @@ int rtctest_main(int argc, char *argv[])
 	while (mt_getline(buf, 10) > 1)
 	{
 		int sec = atoi(buf);
+		RtcId_t id;
 		
-		if (RtcTimedFunction(rtc_test, &test_arg, sec) == 0)
-			printk("Tarea creada con tiempo: %d segundos.\n", sec);
+		if ((id = RtcTimedFunction(rtc_test, &test_arg, sec)) > 0)
+			printk("Tarea creada con tiempo: %d segundos. ID: %ld\n", sec, id);
 		else
 			printk("Error al agregar tarea.\n");
 		

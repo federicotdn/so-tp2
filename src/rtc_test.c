@@ -11,7 +11,7 @@ void rtc_test2(void *arg)
 {
 	int *num = (int*)arg; 
 	struct RtcTime_t t;
-	
+
 	printk("\nFuncion completada. arg: %d\n-> ", *num);
 	RtcGetTime(&t);
 	printk("Hora: %u:%u:%u\n", t.hours, t.minutes, t.seconds);
@@ -67,8 +67,12 @@ int rtcalarm_main(int argc, char *argv[])
 int rtctime_main(int argc, char *argv[])
 {
 	struct RtcTime_t t;
+	struct RtcDate_t d;
+	
 	RtcGetTime(&t);
+	RtcGetDate(&d);
 	printk("sec: %u, min: %u, hour: %d\n", t.seconds, t.minutes, t.hours);
+	printk("dia: %u, mes: %u, anio: %d\n", d.day, d.month, d.year);
 	return 0;
 }
 

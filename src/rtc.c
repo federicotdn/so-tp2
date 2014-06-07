@@ -14,6 +14,10 @@
 #define RTC_REG_MIN 0x02
 #define RTC_REG_HOUR 0x04
 
+#define RTC_REG_DAY 0x07
+#define RTC_REG_MONTH 0x08
+#define RTC_REG_YEAR 0x09
+
 #define RTC_PRIO 10000
 #define RTC_QUEUE_SIZE 30
 #define RTC_INTS_SEC 1024
@@ -566,7 +570,49 @@ void RtcGetTime(struct RtcTime_t *t)
 
 void RtcGetDate(struct RtcDate_t *d)
 {
+	unsigned year, last_year;
+	unsigned month, last_month;
+	unsigned day, last_day;
+	unsigned reg_b;
+	bool valid = false;
 	
+	while (!valid)
+	{
+		while (rtc_update_in_progress())
+			;
+		
+		last_year = read_cmos(RTC_REG_YEAR);
+		last_month = read_cmos(RTC_REG_MONTH);
+		last_day = read_cmos(RTC_REG_DAY);
+		
+		while (rtc_update_in_progress())
+			;
+		
+		year = read_cmos(RTC_REG_YEAR);
+		month = read_cmos(RTC_REG_MONTH);
+		day = read_cmos(RTC_REG_DAY);
+		
+		if (year == last_year &&
+			month == last_month &&
+			day == last_day)
+		{
+			valid = true;
+		}
+	}
+	
+	reg_b = read_cmos(CMOS_REG_B);
+	
+	/* Convertir BCD -> binario */
+	if (!BIT(reg_b, 2))
+	{
+		year = BCD_TO_BIN(year);
+		month = BCD_TO_BIN(month);
+		day = BCD_TO_BIN(day);
+	}
+	
+	d->year = year;
+	d->month = month;
+	d->day = day;
 }
 
 int RtcSetTime(struct RtcTime_t *t)

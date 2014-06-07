@@ -26,6 +26,7 @@ cmdtab[] =
 	{ 	"t",		rtctime_main },
 	{ 	"a",		rtcalarm_main },
 	{ 	"c",		rtccancel_main },
+	{ 	"w", 		rtcwrite_main },
 	{ }
 };
 

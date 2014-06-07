@@ -32,12 +32,15 @@
 
 #define BIT(val, pos) ((val) & (1 << (pos)))
 #define BCD_TO_BIN(t) ((t & 0x0F) + ((t >> 4) * 10))
+#define BIN_TO_BCD(t) (((t / 10) << 4) + (t % 10))
 
 /* Errores */
 #define RTC_ERR_ADD -1
 #define RTC_ERR_MEM -2
 #define RTC_ERR_FMT -3
 #define RTC_ERR_ID  -4
+
+static unsigned char rtc_days_per_month[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
 
 struct rtc_fn {
 	RtcFunc_t fn;
@@ -114,7 +117,7 @@ Funciones internas
 */
 
 /*
- * Funciones para leer/escribir registros del CMOS mediante inb/outb
+ * Funciones para leer/escribir registros del CMOS mediante inb/outb.
  */
 static void write_cmos(unsigned char reg, unsigned data)
 {
@@ -136,13 +139,14 @@ static unsigned read_cmos(unsigned char reg)
 	return d;
 }
 
+/* Comprobar si la hora del RTC esta siendo actualizada. */
 int rtc_update_in_progress(void)
 {
 	int reg_a = read_cmos(CMOS_REG_A);
 	return BIT(reg_a, 7);
 }
 
-/* Maneja la interrupcion generada por el RTC (IRQ 8) */
+/* Maneja la interrupcion generada por el RTC (IRQ 8). */
 static void rtc_int(unsigned irq)
 {
 	static unsigned alarm_count = 0;
@@ -365,6 +369,40 @@ static int rtc_is_valid_time(struct RtcTime_t *t)
 	return (t->hours < 24 && t->minutes < 60 && t->seconds < 60);
 }
 
+static int rtc_is_valid_date(struct RtcDate_t *d)
+{
+	bool leap = false;
+	
+	if (d->month > 12 || d->day > 31)
+		return 0;
+		
+	if (d->year % 4 == 0)
+	{
+		if (d->year % 100 == 0)
+		{
+			if (d->year % 400 == 0)
+			{
+				leap = true;
+			}
+			else
+			{
+				leap = false;
+			}
+		}
+		else
+		{
+			leap = true;
+		}
+	}
+	
+	if (leap && d->month == 2)
+		return (d->day < 30);
+	else
+		return (d->day < (rtc_days_per_month[d->month - 1] + 1));
+}
+
+/* Funcion de uso interno que maneja la creacion de estructuras rtc_fn, para
+ * agregarlas la cola de funciones a ejecutar. */
 static RtcId_t rtc_add_function(RtcFunc_t fn, void *arg, unsigned int seconds, char mode)
 {
 	struct rtc_fn *new_fn;
@@ -408,6 +446,8 @@ static RtcId_t rtc_add_function(RtcFunc_t fn, void *arg, unsigned int seconds, c
 	}
 }
 
+/* Funcion de uso interno similar a rtc_add_function, con la diferencia de que los valores
+ * inicializados son distintos (hora de la alarma). */
 static RtcId_t rtc_add_function_alarm(RtcFunc_t fn, void *arg, struct RtcTime_t *t)
 {
 	struct rtc_fn *new_fn;
@@ -501,6 +541,10 @@ int RtcCancelFunction(RtcId_t id)
 		return RTC_ERR_ADD;
 }
 
+/*
+ * Cancelar todas las funciones programadas por cierta tarea.  Toma el ID de la tarea
+ * como argumento.
+ */
 int RtcCancelTaskFunctions(mt_id_t task_id)
 {
 	if ( PutMsgQueue(notask_rtc_fns, &task_id) )
@@ -568,6 +612,9 @@ void RtcGetTime(struct RtcTime_t *t)
 	t->hours = hours;
 }
 
+/*
+ * Leer la fecha actual.
+ */
 void RtcGetDate(struct RtcDate_t *d)
 {
 	unsigned year, last_year;
@@ -615,14 +662,97 @@ void RtcGetDate(struct RtcDate_t *d)
 	d->day = day;
 }
 
+/*
+ * Cambiar la hora del RTC a una especificada por el usuario.  Formato:
+ * 24hs.  No afecta el funcionamiento de funciones programadas.
+ * 
+ * Devuelve 0 si la hora se cambio correctamente, o error si la hora era invalida.
+ */
 int RtcSetTime(struct RtcTime_t *t)
 {
+	unsigned reg_b, reg_b_aux;
+	unsigned seconds, minutes, hours;
 	
+	if (!rtc_is_valid_time(t))
+		return RTC_ERR_FMT;
+		
+	while (rtc_update_in_progress())
+		;
+		
+	reg_b = read_cmos(CMOS_REG_B);
+	reg_b_aux = reg_b | 0x80;
+	write_cmos(CMOS_REG_B, reg_b_aux);
+	
+	if (!BIT(reg_b, 2))
+	{
+		hours = BIN_TO_BCD(t->hours);
+		minutes = BIN_TO_BCD(t->minutes);
+		seconds = BIN_TO_BCD(t->seconds);
+	}
+	else
+	{
+		hours = t->hours;
+		minutes = t->minutes;
+		seconds = t->seconds;
+	}
+	
+	DisableInts();
+	
+	write_cmos(RTC_REG_SEC, seconds);
+	write_cmos(RTC_REG_MIN, minutes);
+	write_cmos(RTC_REG_HOUR, hours);
+	
+	write_cmos(CMOS_REG_B, reg_b);
+	RestoreInts();
+	
+	return 0;
 }
 
+
+/*
+ * Cambiar la fecha a una especificada por el usuario.
+ * 
+ * Devuelve 0 si la fecha fue cambiada correctamente, o error si la 
+ * fecha era invalida.
+ */
 int RtcSetDate(struct RtcDate_t *d)
 {
+	unsigned reg_b, reg_b_aux;
+	unsigned year, month, day;
 	
+	if (!rtc_is_valid_date(d))
+		return RTC_ERR_FMT;
+	
+	while (rtc_update_in_progress())
+		;
+		
+	reg_b = read_cmos(CMOS_REG_B);
+	reg_b_aux = reg_b | 0x80;
+	write_cmos(CMOS_REG_B, reg_b_aux);
+	
+	if (!BIT(reg_b, 2))
+	{
+		year = BIN_TO_BCD(d->year);
+		month = BIN_TO_BCD(d->month);
+		day = BIN_TO_BCD(d->day);
+	}
+	else
+	{
+		year = d->year;
+		month = d->month;
+		day = d->day;
+	}
+	
+	DisableInts();
+	
+	write_cmos(RTC_REG_YEAR, year);
+	write_cmos(RTC_REG_MONTH, month);
+	write_cmos(RTC_REG_DAY, day);
+	
+	write_cmos(CMOS_REG_B, reg_b);
+	RestoreInts();
+	
+	return 0;
 }
 
 /* Inicializar las utilidades RTC */

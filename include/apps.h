@@ -15,5 +15,6 @@ int rtctest_main(int argc, char *argv[]);			// rtc_test.c
 int rtctime_main(int argc, char *argv[]);			// rtc_test.c
 int rtcalarm_main(int argc, char *argv[]);			// rtc_test.c
 int rtccancel_main(int argc, char *argv[]);			// rtc_test.c
+int rtcwrite_main(int argc, char *argv[]);			// rtc_test.c
 
 #endif

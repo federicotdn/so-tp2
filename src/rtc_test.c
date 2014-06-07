@@ -101,3 +101,30 @@ int rtctest_main(int argc, char *argv[])
 	
 	return 0;
 }
+
+int rtcwrite_main(int argc, char *argv[])
+{
+	struct RtcTime_t time;
+	char buf[30];
+	int arg = 1337;
+	
+	printk("RTC Write Time Test\n");
+	printk("Ingresar hora:\n");
+	mt_getline(buf, 10);
+	time.hours = atoi(buf);
+	
+	printk("Ingresar minutos:\n");
+	mt_getline(buf, 10);
+	time.minutes = atoi(buf);
+	
+	printk("Ingresar segundos:\n");
+	mt_getline(buf, 10);
+	time.seconds = atoi(buf);
+	
+	RtcSetTime(&time);
+	
+	printk("Presione ENTER para salir...\n");
+	mt_getline(buf, 10);
+	
+	return 0;
+}

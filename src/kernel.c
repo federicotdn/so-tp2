@@ -1,5 +1,7 @@
 #include "kernel.h"
 #include "apps.h"
+#include "mt_id.h"
+#include "rtc.h"
 
 #define CLOCKIRQ		0				/* interrupcion de timer */
 #define MIN_STACK		4096			/* tamaño de stack mínimo */ 
@@ -11,6 +13,9 @@ Task_t * volatile mt_curr_task;			/* tarea en ejecucion */
 Task_t * volatile mt_last_task;			/* tarea anterior */
 Task_t * volatile mt_fpu_task;			/* tarea que tiene el coprocesador */
 unsigned long long volatile mt_ticks;	/* ticks ocurridos desde el arranque */
+
+/* Implementacion muy simple para darle un ID a cada tarea */
+static mt_id_t mt_id_counter;
 
 static Task_t main_task;				/* tarea principal */
 static volatile unsigned ticks_to_run;	/* ranura de tiempo */
@@ -39,6 +44,18 @@ typedef struct
 	void *			arg;
 }
 InitialStack_t;
+
+/*
+--------------------------------------------------------------------------------
+GetId - devuelve el ID de una tarea
+--------------------------------------------------------------------------------
+*/
+
+mt_id_t 
+GetId(Task_t *task)
+{
+	return task->task_id;
+}
 
 /*
 --------------------------------------------------------------------------------
@@ -162,6 +179,7 @@ CreateTask(TaskFunc_t func, unsigned stacksize, void *arg, char *name, unsigned 
 	task = Malloc(sizeof(Task_t));
 	task->name = task->send_queue.name = StrDup(name);
 	task->priority = priority;
+	task->task_id = mt_id_counter++;
 
 	/* alocar stack */
 	stacksize &= ~3;					// redondear a multiplos de 4
@@ -208,6 +226,9 @@ DeleteTask(Task_t *task)
 	FlushQueue(&task->send_queue, false);
 	if ( mt_fpu_task == task )
 		mt_fpu_task = NULL;
+	
+	RtcCancelTaskFunctions(task->task_id);
+	
 	DisableInts();
 	if ( task == mt_curr_task )
 	{
@@ -889,10 +910,12 @@ mt_main(void)
 	
 	// Inicializar RTC
 	mt_rtc_init();
+	mt_id_counter = 1;
 
 	// Inicializar tarea principal
 	main_task.name = "Main Task";
 	main_task.state = TaskCurrent;
+	main_task.task_id = 0;
 	main_task.priority = DEFAULT_PRIO;
 	main_task.send_queue.name = main_task.name;
 	mt_curr_task = &main_task;

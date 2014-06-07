@@ -45,6 +45,7 @@ struct rtc_fn {
 	struct RtcTime_t exec_time;
 	
 	RtcId_t id;
+	mt_id_t owner_id;
 	struct rtc_fn *next;
 };
 
@@ -97,6 +98,12 @@ static MsgQueue_t *ready_rtc_fns;
 static MsgQueue_t *remove_rtc_fns;
 
 /*
+ * Cola de IDs de tareas que fueron eliminadas.  Se utiliza para eliminar las funciones que fueron
+ * programadas por esas tareas.
+ */
+static MsgQueue_t *notask_rtc_fns;
+
+/*
 --------------------------------------------------------------------------------
 Funciones internas
 --------------------------------------------------------------------------------
@@ -139,6 +146,7 @@ static void rtc_int(unsigned irq)
 	unsigned reg_c;
 	struct rtc_fn *new_fn, *aux;
 	RtcId_t id;
+	mt_id_t task_id;
 	
 	/* 
 	 * El RTC requiere que se lea el registro C para
@@ -188,6 +196,30 @@ static void rtc_int(unsigned irq)
 				aux->next = next->next;
 				next->next = NULL;
 				PutMsgQueueCond(ready_rtc_fns, &next);
+				break;
+			}
+			
+			aux = aux->next;
+		}
+	}
+	
+	/* Fijarse si hay funciones asociadas con tareas eliminadas */
+	while ( GetMsgQueueCond(notask_rtc_fns, &task_id) )
+	{
+		aux = &rtc_fn_head;
+		while (aux != NULL && aux->next != NULL)
+		{
+			struct rtc_fn *next = aux->next;
+			if (next->owner_id == task_id)
+			{
+				if (next->mode == RTC_ALARM)
+					alarm_count--;
+				
+				next->mode = RTC_DISABLED;
+				aux->next = next->next;
+				next->next = NULL;
+				PutMsgQueueCond(ready_rtc_fns, &next);
+				break;
 			}
 			
 			aux = aux->next;
@@ -332,6 +364,7 @@ static int rtc_is_valid_time(struct RtcTime_t *t)
 static RtcId_t rtc_add_function(RtcFunc_t fn, void *arg, unsigned int seconds, char mode)
 {
 	struct rtc_fn *new_fn;
+	Task_t *curr_task;
 	unsigned int ticks = 0;
 	
 	if (seconds == 0)
@@ -347,6 +380,8 @@ static RtcId_t rtc_add_function(RtcFunc_t fn, void *arg, unsigned int seconds, c
 	if (new_fn == NULL)
 		return RTC_ERR_MEM;
 	
+	curr_task = CurrentTask();
+	
 	new_fn->fn = fn;
 	new_fn->arg = arg;
 	new_fn->ticks_left = ticks;
@@ -354,6 +389,7 @@ static RtcId_t rtc_add_function(RtcFunc_t fn, void *arg, unsigned int seconds, c
 	new_fn->mode = mode;
 	new_fn->next = NULL;
 	new_fn->id = rtc_gen_id();
+	new_fn->owner_id = GetId(curr_task);
 	
 	/* Agregar la funcion a la cola de funciones nuevas */
 	if (PutMsgQueue(new_rtc_fns, &new_fn))
@@ -371,17 +407,21 @@ static RtcId_t rtc_add_function(RtcFunc_t fn, void *arg, unsigned int seconds, c
 static RtcId_t rtc_add_function_alarm(RtcFunc_t fn, void *arg, struct RtcTime_t *t)
 {
 	struct rtc_fn *new_fn;
+	Task_t *curr_task;
 	
 	new_fn = Malloc(sizeof(struct rtc_fn));
 	if (new_fn == NULL)
 		return RTC_ERR_MEM;
-		
+	
+	curr_task = CurrentTask();	
+	
 	new_fn->fn = fn;
 	new_fn->arg = arg;
 	new_fn->ticks_init = new_fn->ticks_left = 0;
 	new_fn->mode = RTC_ALARM;
 	new_fn->next = NULL;
 	new_fn->id = rtc_gen_id();
+	new_fn->owner_id = GetId(curr_task);
 	
 	new_fn->exec_time.hours = t->hours;
 	new_fn->exec_time.minutes = t->minutes;
@@ -452,6 +492,14 @@ int RtcCancelFunction(RtcId_t id)
 		return RTC_ERR_ID;
 		
 	if ( PutMsgQueue(remove_rtc_fns, &id) )
+		return 0;
+	else
+		return RTC_ERR_ADD;
+}
+
+int RtcCancelTaskFunctions(mt_id_t task_id)
+{
+	if ( PutMsgQueue(notask_rtc_fns, &task_id) )
 		return 0;
 	else
 		return RTC_ERR_ADD;
@@ -546,6 +594,7 @@ void mt_rtc_init(void)
 	new_rtc_fns = CreateMsgQueue("rtc_new_fns", RTC_QUEUE_SIZE, sizeof(struct rtc_fn*), false, true);
 	ready_rtc_fns = CreateMsgQueue("rtc_rdy_fns", RTC_QUEUE_SIZE, sizeof(struct rtc_fn*), false, false);
 	remove_rtc_fns = CreateMsgQueue("rtc_remove_fns", RTC_QUEUE_SIZE, sizeof(RtcId_t), false, true);
+	notask_rtc_fns = CreateMsgQueue("rtc_notask_fns", RTC_QUEUE_SIZE, sizeof(mt_id_t), false, true);
 	
 	mt_set_int_handler(RTC_INT, rtc_int);
 	mt_enable_irq(RTC_INT);

@@ -2,6 +2,7 @@
 #define MTASK_H_INCLUDED
 
 #include "lib.h"
+#include "mt_id.h"
 
 #define MIN_PRIO		0
 #define DEFAULT_PRIO	50
@@ -67,6 +68,7 @@ struct Task_t
 	void *			msg;
 	unsigned 		size;
 	TaskQueue_t 	send_queue;
+	mt_id_t		task_id;
 };
 
 typedef void (*TaskFunc_t)(void *arg);
@@ -80,6 +82,7 @@ void				DeleteTask(Task_t *task);
 	
 unsigned			GetPriority(Task_t *task);
 void				SetPriority(Task_t *task, unsigned priority);
+mt_id_t			GetId(Task_t *task);
 void				Suspend(Task_t *task);
 void				Ready(Task_t *task);
 

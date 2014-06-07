@@ -1,2 +1,2 @@
 obj/gdt_idt.o dep/gdt_idt.d: src/gdt_idt.c include/kernel.h \
- include/mtask.h include/lib.h include/segments.h
+ include/mtask.h include/lib.h include/mt_id.h include/segments.h

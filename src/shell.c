@@ -25,6 +25,7 @@ cmdtab[] =
 	{ 	"r",		rtctest_main },
 	{ 	"t",		rtctime_main },
 	{ 	"a",		rtcalarm_main },
+	{ 	"c",		rtccancel_main },
 	{ }
 };
 

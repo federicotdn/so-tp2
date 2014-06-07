@@ -33,6 +33,7 @@
 #define RTC_ERR_ADD -1
 #define RTC_ERR_MEM -2
 #define RTC_ERR_FMT -3
+#define RTC_ERR_ID  -4
 
 struct rtc_fn {
 	RtcFunc_t fn;
@@ -137,6 +138,7 @@ static void rtc_int(unsigned irq)
 	struct RtcTime_t curr_time;
 	unsigned reg_c;
 	struct rtc_fn *new_fn, *aux;
+	RtcId_t id;
 	
 	/* 
 	 * El RTC requiere que se lea el registro C para
@@ -170,6 +172,27 @@ static void rtc_int(unsigned irq)
 			alarm_count++;
 	}
 	
+	/* Fijarse si hay funciones para cancelar/remover */
+	while ( GetMsgQueueCond(remove_rtc_fns, &id) )
+	{
+		aux = &rtc_fn_head;
+		while (aux != NULL && aux->next != NULL)
+		{
+			struct rtc_fn *next = aux->next;
+			if (next->id == id)
+			{
+				if (next->mode == RTC_ALARM)
+					alarm_count--;
+				
+				next->mode = RTC_DISABLED;
+				aux->next = next->next;
+				next->next = NULL;
+				PutMsgQueueCond(ready_rtc_fns, &next);
+			}
+			
+			aux = aux->next;
+		}
+	}
 	
 	/* Dos optimizaciones */
 	if (rtc_fn_head.next == NULL)
@@ -404,7 +427,13 @@ RtcId_t RtcAlarmFunction(RtcFunc_t fn, void *arg, struct RtcTime_t *t)
 
 int RtcCancelFunction(RtcId_t id)
 {
-	
+	if (id < 1)
+		return RTC_ERR_ID;
+		
+	if ( PutMsgQueue(remove_rtc_fns, &id) )
+		return 0;
+	else
+		return RTC_ERR_ADD;
 }
 
 void RtcGetTime(struct RtcTime_t *t)

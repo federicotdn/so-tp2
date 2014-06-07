@@ -17,6 +17,26 @@ void rtc_test2(void *arg)
 	printk("Hora: %u:%u:%u\n", t.hours, t.minutes, t.seconds);
 }
 
+int rtccancel_main(int argc, char *argv[])
+{
+	char buf[30];
+	RtcId_t id;
+	int arg = 9000;
+	
+	printk("Presione ENTER para programar una tarea periodica de 3s\n");
+	mt_getline(buf, 10);
+	id = RtcRepeatFunction(rtc_test, &arg, 3);
+	
+	printk("Presione ENTER para cancelar la tarea periodica.\n");
+	mt_getline(buf, 10);
+	RtcCancelFunction(id);
+	
+	printk("Presione ENTER para salir.\n");
+	mt_getline(buf, 10);
+	
+	return 0;
+}
+
 int rtcalarm_main(int argc, char *argv[])
 {
 	struct RtcTime_t time;

@@ -3,8 +3,8 @@
 #include <kernel.h>
 
 #define RTC_INT 8
-#define RTC_IN_PORT 0x70
-#define RTC_OUT_PORT 0x71
+#define CMOS_IN_PORT 0x70
+#define CMOS_OUT_PORT 0x71
 
 #define CMOS_REG_A 0x0A
 #define CMOS_REG_B 0x0B
@@ -108,8 +108,8 @@ Funciones internas
 static void write_cmos(unsigned char reg, unsigned data)
 {
 	DisableInts();
-	outb(RTC_IN_PORT, reg);
-	outb(RTC_OUT_PORT, data);
+	outb(CMOS_IN_PORT, reg);
+	outb(CMOS_OUT_PORT, data);
 	RestoreInts();
 }
 
@@ -118,8 +118,8 @@ static unsigned read_cmos(unsigned char reg)
 	unsigned d = 0;
 	
 	DisableInts();
-	outb(RTC_IN_PORT, reg);
-	d = inb(RTC_OUT_PORT);
+	outb(CMOS_IN_PORT, reg);
+	d = inb(CMOS_OUT_PORT);
 	RestoreInts();
 	
 	return d;
@@ -206,8 +206,8 @@ static void rtc_int(unsigned irq)
 	 * tiempo agotado.  Si se encuentra, se la remueve de la lista y se 
 	 * la agrega a un MessageQueue de funciones listas a ser ejecutadas
 	 * por el 'bottom half' (rtc_task_fn).  En el caso de las funciones
-	 * a repetir, no el proceso es el mismo pero no se la quita de la 
-	 * lista.  
+	 * a repetir, el proceso es el mismo pero no se la quita de la 
+	 * lista actual.  
 	 * 
 	 * Para las funciones de tipo alarma, el proceso es similar
 	 * pero se compara el valor de tiempo de la alarma con la hora actual,
@@ -251,6 +251,9 @@ static void rtc_int(unsigned irq)
 	}
 }
 
+/*
+ * Generar un nuevo ID para programar una funcion.
+ */
 static RtcId_t rtc_gen_id()
 {
 	RtcId_t id;
@@ -273,6 +276,10 @@ static RtcId_t rtc_gen_id()
 	return id;
 }
 
+/*
+ * "Devolver" el ID de una funcion eliminada para poder re-utilizarlo para
+ * otra funcion.
+ */
 static void rtc_return_id(RtcId_t id)
 {
 	struct rtc_id *aux;
@@ -412,11 +419,21 @@ RtcId_t RtcTimedFunction(RtcFunc_t fn, void *arg, unsigned int seconds)
 	return rtc_add_function(fn, arg, seconds, RTC_ONCE);
 }
 
+/*
+ * Igual a RtcTimedFunction, con la diferencia de que la funcion se ejecutara cada
+ * N segundos continuamente, a menos que el usuario cancele la funcion utilizando
+ * RtcCancelFunction.
+ */
 RtcId_t RtcRepeatFunction(RtcFunc_t fn, void *arg, unsigned int seconds)
 {
 	return rtc_add_function(fn, arg, seconds, RTC_REPEAT);
 }
 
+/*
+ * Igual a RtcTimedFuncion, con la diferencia de que la funcion no se ejecutra dentro
+ * de cierto tiempo, si no que se ejecuta a cierta hora especificada por el usuario,
+ * una sola vez.
+ */
 RtcId_t RtcAlarmFunction(RtcFunc_t fn, void *arg, struct RtcTime_t *t)
 {
 	if (rtc_is_valid_time(t))
@@ -425,6 +442,10 @@ RtcId_t RtcAlarmFunction(RtcFunc_t fn, void *arg, struct RtcTime_t *t)
 		return RTC_ERR_FMT;
 }
 
+/*
+ * Cancela una funcion programada creada con RtcTimedFunction, RtcRepeatFunction o
+ * RtcAlarmFunction.  Identifica cada funcion con un ID de tipo RtcId_t.
+ */
 int RtcCancelFunction(RtcId_t id)
 {
 	if (id < 1)
@@ -436,6 +457,9 @@ int RtcCancelFunction(RtcId_t id)
 		return RTC_ERR_ADD;
 }
 
+/*
+ * Leer la hora actual.  Formato: 24hs.
+ */
 void RtcGetTime(struct RtcTime_t *t)
 {
 	unsigned seconds, last_seconds;
